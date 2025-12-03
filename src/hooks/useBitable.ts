@@ -63,20 +63,33 @@ export function useBitable(): UseBitableResult {
       let dashboardState: DashboardState | null = null;
       try {
         // @ts-ignore - dashboard 可能不存在
-        if (bitable.dashboard) {
+        if (bitable.dashboard && typeof bitable.dashboard.getState === 'function') {
           // @ts-ignore
-          dashboardState = await bitable.dashboard.getState();
+          const state = await bitable.dashboard.getState();
+          if (state) {
+            dashboardState = state;
+          }
         }
-      } catch {
-        // 不在仪表盘环境
+      } catch (e) {
+        console.log('非仪表盘环境:', e);
+        // 不在仪表盘环境，继续使用边栏模式
       }
       
       if (dashboardState) {
+        console.log('仪表盘模式，状态:', dashboardState);
         setIsDashboard(true);
         setIsConfigMode(dashboardState === DashboardState.Config);
-        await initDashboard(dashboardState);
+        try {
+          await initDashboard(dashboardState);
+        } catch (dashErr) {
+          console.error('仪表盘初始化失败，回退到边栏模式:', dashErr);
+          // 回退到边栏模式
+          setIsDashboard(false);
+          await initSidebar();
+        }
       } else {
         // 边栏模式
+        console.log('边栏模式');
         await initSidebar();
       }
       
@@ -94,12 +107,22 @@ export function useBitable(): UseBitableResult {
       // 获取仪表盘配置
       // @ts-ignore
       const config = await bitable.dashboard.getConfig();
+      console.log('仪表盘配置:', config);
       
+      // 如果没有配置，尝试使用当前活动表格
       if (!config || !config.dataConditions || config.dataConditions.length === 0) {
+        console.log('无数据源配置，尝试使用当前表格');
+        // 回退：使用当前活动表格
+        const table = await bitable.base.getActiveTable();
+        if (table) {
+          await initWithTable(table);
+          return;
+        }
+        
         if (state === DashboardState.Config) {
           setError('请配置数据源：选择包含附件的表格和字段');
         } else {
-          setError('未配置数据源');
+          setError('未配置数据源，请在表格中打开此插件');
         }
         return;
       }
@@ -163,8 +186,41 @@ export function useBitable(): UseBitableResult {
       
     } catch (err) {
       console.error('仪表盘初始化失败:', err);
-      setError('仪表盘初始化失败');
+      throw err; // 抛出错误让上层处理回退
     }
+  };
+
+  // 使用指定表格初始化（仪表盘回退用）
+  const initWithTable = async (table: ITable) => {
+    tableRef.current = table;
+    
+    const fieldMetaList = await table.getFieldMetaList();
+    const attachmentFields = fieldMetaList.filter(f => f.type === FieldType.Attachment);
+    
+    if (attachmentFields.length === 0) {
+      setError('当前表格没有附件字段');
+      return;
+    }
+    
+    const fieldId = attachmentFields[0].id;
+    dashboardFieldIdRef.current = fieldId;
+    attachmentFieldIdsRef.current = new Set(attachmentFields.map(f => f.id));
+    setFieldName(attachmentFields[0].name);
+    
+    // 获取视图记录
+    const view = await table.getActiveView();
+    const recordIdList = await view.getVisibleRecordIdList();
+    const recordIds = recordIdList.filter((id): id is string => id !== undefined);
+    
+    if (recordIds.length > 0) {
+      recordIdsRef.current = recordIds;
+      setTotalRecords(recordIds.length);
+      setCurrentRecordIndex(0);
+      await loadAttachmentsForRecord(table, fieldId, recordIds[0]);
+    }
+    
+    // 监听选择变化
+    bitable.base.onSelectionChange(handleSelectionChange);
   };
 
   // 边栏模式初始化
