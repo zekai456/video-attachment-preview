@@ -10,6 +10,11 @@ function App() {
     attachments,
     attachmentUrls,
     fieldName,
+    isDashboard,
+    currentRecordIndex,
+    totalRecords,
+    goNext,
+    goPrev,
     refreshAttachmentUrl
   } = useBitable();
 
@@ -34,6 +39,11 @@ function App() {
       <Header
         fieldName={fieldName}
         attachmentCount={attachments.length}
+        isDashboard={isDashboard}
+        currentIndex={currentRecordIndex}
+        totalRecords={totalRecords}
+        onPrev={goPrev}
+        onNext={goNext}
       />
       
       <PreviewArea

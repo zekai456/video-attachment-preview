@@ -2,6 +2,13 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { bitable, FieldType, ITable } from '@lark-base-open/js-sdk';
 import { AttachmentInfo, CachedUrls } from '../types';
 
+// Dashboard 状态枚举
+enum DashboardState {
+  View = 'View',
+  Config = 'Config',
+  Create = 'Create'
+}
+
 interface Selection {
   tableId: string | null;
   viewId: string | null;
@@ -15,6 +22,12 @@ interface UseBitableResult {
   attachments: AttachmentInfo[];
   attachmentUrls: Map<string, string>;
   fieldName: string;
+  isDashboard: boolean;
+  isConfigMode: boolean;
+  currentRecordIndex: number;
+  totalRecords: number;
+  goNext: () => void;
+  goPrev: () => void;
   refreshAttachmentUrl: (token: string) => Promise<string | null>;
 }
 
@@ -24,45 +37,47 @@ export function useBitable(): UseBitableResult {
   const [attachments, setAttachments] = useState<AttachmentInfo[]>([]);
   const [attachmentUrls, setAttachmentUrls] = useState<Map<string, string>>(new Map());
   const [fieldName, setFieldName] = useState<string>('附件预览');
+  const [isDashboard, setIsDashboard] = useState(false);
+  const [isConfigMode, setIsConfigMode] = useState(false);
+  const [currentRecordIndex, setCurrentRecordIndex] = useState(0);
+  const [totalRecords, setTotalRecords] = useState(0);
   
   const tableRef = useRef<ITable | null>(null);
   const currentSelectionRef = useRef<{ fieldId: string; recordId: string } | null>(null);
   const urlCacheRef = useRef<CachedUrls>({});
   const attachmentFieldIdsRef = useRef<Set<string>>(new Set());
+  const recordIdsRef = useRef<string[]>([]);
+  const dashboardFieldIdRef = useRef<string | null>(null);
   const URL_CACHE_DURATION = 8 * 60 * 1000;
 
   // 初始化
   useEffect(() => {
     initBitable();
-    
-    const off = bitable.base.onSelectionChange(handleSelectionChange);
-    return () => off();
   }, []);
 
   const initBitable = async () => {
     try {
       setLoading(true);
-      const table = await bitable.base.getActiveTable();
-      tableRef.current = table;
       
-      // 获取所有附件字段的ID
-      const fieldMetaList = await table.getFieldMetaList();
-      const attachmentFieldIds = fieldMetaList
-        .filter(field => field.type === FieldType.Attachment)
-        .map(field => field.id);
-      
-      if (attachmentFieldIds.length === 0) {
-        setError('当前表格没有附件字段');
-        setLoading(false);
-        return;
+      // 检测是否在仪表盘环境
+      let dashboardState: DashboardState | null = null;
+      try {
+        // @ts-ignore - dashboard 可能不存在
+        if (bitable.dashboard) {
+          // @ts-ignore
+          dashboardState = await bitable.dashboard.getState();
+        }
+      } catch {
+        // 不在仪表盘环境
       }
       
-      attachmentFieldIdsRef.current = new Set(attachmentFieldIds);
-
-      // 获取当前选中
-      const selection = await bitable.base.getSelection();
-      if (selection.fieldId && selection.recordId) {
-        await loadCellAttachments(table, selection.fieldId, selection.recordId);
+      if (dashboardState) {
+        setIsDashboard(true);
+        setIsConfigMode(dashboardState === DashboardState.Config);
+        await initDashboard(dashboardState);
+      } else {
+        // 边栏模式
+        await initSidebar();
       }
       
       setLoading(false);
@@ -73,12 +88,161 @@ export function useBitable(): UseBitableResult {
     }
   };
 
+  // 仪表盘模式初始化
+  const initDashboard = async (state: DashboardState) => {
+    try {
+      // 获取仪表盘配置
+      // @ts-ignore
+      const config = await bitable.dashboard.getConfig();
+      
+      if (!config || !config.dataConditions || config.dataConditions.length === 0) {
+        if (state === DashboardState.Config) {
+          setError('请配置数据源：选择包含附件的表格和字段');
+        } else {
+          setError('未配置数据源');
+        }
+        return;
+      }
+
+      const dataCondition = config.dataConditions[0];
+      const tableId = dataCondition.tableId;
+      
+      const table = await bitable.base.getTableById(tableId);
+      tableRef.current = table;
+      
+      // 获取附件字段
+      const fieldMetaList = await table.getFieldMetaList();
+      const attachmentFields = fieldMetaList.filter(f => f.type === FieldType.Attachment);
+      
+      if (attachmentFields.length === 0) {
+        setError('所选表格没有附件字段');
+        return;
+      }
+      
+      // 使用第一个附件字段或配置的字段
+      const fieldId = attachmentFields[0].id;
+      dashboardFieldIdRef.current = fieldId;
+      setFieldName(attachmentFields[0].name);
+      
+      // 获取数据
+      // @ts-ignore
+      const data = await bitable.dashboard.getData();
+      if (data && data.length > 0) {
+        const recordIds = data.map((row: { recordId: string }) => row.recordId).filter(Boolean);
+        recordIdsRef.current = recordIds;
+        setTotalRecords(recordIds.length);
+        
+        if (recordIds.length > 0) {
+          setCurrentRecordIndex(0);
+          await loadAttachmentsForRecord(table, fieldId, recordIds[0]);
+        }
+      }
+      
+      // 监听配置变化
+      // @ts-ignore
+      bitable.dashboard.onConfigChange(async () => {
+        // @ts-ignore
+        await initDashboard(await bitable.dashboard.getState());
+      });
+      
+      // 监听数据变化
+      // @ts-ignore
+      bitable.dashboard.onDataChange(async () => {
+        // @ts-ignore
+        const newData = await bitable.dashboard.getData();
+        if (newData && newData.length > 0) {
+          const recordIds = newData.map((row: { recordId: string }) => row.recordId).filter(Boolean);
+          recordIdsRef.current = recordIds;
+          setTotalRecords(recordIds.length);
+          
+          if (recordIds.length > 0 && dashboardFieldIdRef.current) {
+            await loadAttachmentsForRecord(tableRef.current!, dashboardFieldIdRef.current, recordIds[0]);
+          }
+        }
+      });
+      
+    } catch (err) {
+      console.error('仪表盘初始化失败:', err);
+      setError('仪表盘初始化失败');
+    }
+  };
+
+  // 边栏模式初始化
+  const initSidebar = async () => {
+    const table = await bitable.base.getActiveTable();
+    tableRef.current = table;
+    
+    // 获取所有附件字段的ID
+    const fieldMetaList = await table.getFieldMetaList();
+    const attachmentFieldIds = fieldMetaList
+      .filter(field => field.type === FieldType.Attachment)
+      .map(field => field.id);
+    
+    if (attachmentFieldIds.length === 0) {
+      setError('当前表格没有附件字段');
+      return;
+    }
+    
+    attachmentFieldIdsRef.current = new Set(attachmentFieldIds);
+
+    // 获取当前选中
+    const selection = await bitable.base.getSelection();
+    if (selection.fieldId && selection.recordId) {
+      await loadCellAttachments(table, selection.fieldId, selection.recordId);
+    }
+    
+    // 监听选择变化
+    bitable.base.onSelectionChange(handleSelectionChange);
+  };
+
   const handleSelectionChange = async (event: { data: Selection }) => {
     const { fieldId, recordId } = event.data;
     if (!fieldId || !recordId || !tableRef.current) return;
     
     await loadCellAttachments(tableRef.current, fieldId, recordId);
   };
+  
+  // 仪表盘模式加载附件
+  const loadAttachmentsForRecord = async (table: ITable, fieldId: string, recordId: string) => {
+    currentSelectionRef.current = { fieldId, recordId };
+    
+    const cellValue = await table.getCellValue(fieldId, recordId);
+    
+    if (!cellValue || !Array.isArray(cellValue) || cellValue.length === 0) {
+      setAttachments([]);
+      setAttachmentUrls(new Map());
+      return;
+    }
+
+    await processAttachments(table, fieldId, recordId, cellValue);
+  };
+  
+  // 仪表盘翻页
+  const goNext = useCallback(async () => {
+    if (currentRecordIndex >= totalRecords - 1) return;
+    if (!tableRef.current || !dashboardFieldIdRef.current) return;
+    
+    const newIndex = currentRecordIndex + 1;
+    setCurrentRecordIndex(newIndex);
+    await loadAttachmentsForRecord(
+      tableRef.current, 
+      dashboardFieldIdRef.current, 
+      recordIdsRef.current[newIndex]
+    );
+  }, [currentRecordIndex, totalRecords]);
+
+  const goPrev = useCallback(async () => {
+    if (currentRecordIndex <= 0) return;
+    if (!tableRef.current || !dashboardFieldIdRef.current) return;
+    
+    const newIndex = currentRecordIndex - 1;
+    setCurrentRecordIndex(newIndex);
+    await loadAttachmentsForRecord(
+      tableRef.current, 
+      dashboardFieldIdRef.current, 
+      recordIdsRef.current[newIndex]
+    );
+  }, [currentRecordIndex]);
 
   const loadCellAttachments = async (table: ITable, fieldId: string, recordId: string) => {
     try {
@@ -221,6 +385,12 @@ export function useBitable(): UseBitableResult {
     attachments,
     attachmentUrls,
     fieldName,
+    isDashboard,
+    isConfigMode,
+    currentRecordIndex,
+    totalRecords,
+    goNext,
+    goPrev,
     refreshAttachmentUrl
   };
 }
