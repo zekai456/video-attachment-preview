@@ -62,7 +62,9 @@ export function useBitable(): UseBitableResult {
 
       // 获取当前视图的记录
       const view = await table.getActiveView();
-      const visibleRecordIds = await view.getVisibleRecordIdList();
+      const visibleRecordIdList = await view.getVisibleRecordIdList();
+      // 过滤掉可能的 undefined 值
+      const visibleRecordIds = visibleRecordIdList.filter((id): id is string => id !== undefined);
       setRecordIds(visibleRecordIds);
       setTotalRecords(visibleRecordIds.length);
 
@@ -72,7 +74,7 @@ export function useBitable(): UseBitableResult {
         const index = visibleRecordIds.indexOf(selection.recordId);
         setCurrentIndex(index);
         await loadAttachments(table, attachmentFields[0].id, selection.recordId);
-      } else if (visibleRecordIds.length > 0) {
+      } else if (visibleRecordIds.length > 0 && visibleRecordIds[0]) {
         setCurrentIndex(0);
         await loadAttachments(table, attachmentFields[0].id, visibleRecordIds[0]);
       }
