@@ -10,7 +10,7 @@ function App() {
     attachments,
     attachmentUrls,
     fieldName,
-    isDashboard,
+    recordName,
     currentRecordIndex,
     totalRecords,
     goNext,
@@ -38,8 +38,7 @@ function App() {
     <div className="h-full flex flex-col bg-white overflow-hidden">
       <Header
         fieldName={fieldName}
-        attachmentCount={attachments.length}
-        isDashboard={isDashboard}
+        recordName={recordName}
         currentIndex={currentRecordIndex}
         totalRecords={totalRecords}
         onPrev={goPrev}
