@@ -1,5 +1,5 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
-import { bitable, FieldType, IAttachmentField, ITable } from '@lark-base-open/js-sdk';
+import { bitable, FieldType, ITable } from '@lark-base-open/js-sdk';
 import { AttachmentInfo, CachedUrls } from '../types';
 
 interface Selection {
@@ -12,35 +12,29 @@ interface Selection {
 interface UseBitableResult {
   loading: boolean;
   error: string | null;
-  currentIndex: number;
-  totalRecords: number;
   attachments: AttachmentInfo[];
   attachmentUrls: Map<string, string>;
-  goToRecord: (index: number) => void;
-  goNext: () => void;
-  goPrev: () => void;
+  fieldName: string;
   refreshAttachmentUrl: (token: string) => Promise<string | null>;
 }
 
 export function useBitable(): UseBitableResult {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [currentIndex, setCurrentIndex] = useState(0);
-  const [totalRecords, setTotalRecords] = useState(0);
-  const [recordIds, setRecordIds] = useState<string[]>([]);
   const [attachments, setAttachments] = useState<AttachmentInfo[]>([]);
   const [attachmentUrls, setAttachmentUrls] = useState<Map<string, string>>(new Map());
-  const [attachmentFieldId, setAttachmentFieldId] = useState<string | null>(null);
+  const [fieldName, setFieldName] = useState<string>('附件预览');
   
   const tableRef = useRef<ITable | null>(null);
+  const currentSelectionRef = useRef<{ fieldId: string; recordId: string } | null>(null);
   const urlCacheRef = useRef<CachedUrls>({});
-  const URL_CACHE_DURATION = 8 * 60 * 1000; // 8分钟缓存（URL有效期10分钟）
+  const attachmentFieldIdsRef = useRef<Set<string>>(new Set());
+  const URL_CACHE_DURATION = 8 * 60 * 1000;
 
   // 初始化
   useEffect(() => {
     initBitable();
     
-    // 监听选择变化
     const off = bitable.base.onSelectionChange(handleSelectionChange);
     return () => off();
   }, []);
@@ -51,32 +45,24 @@ export function useBitable(): UseBitableResult {
       const table = await bitable.base.getActiveTable();
       tableRef.current = table;
       
-      // 获取附件字段
-      const attachmentFields = await table.getFieldListByType<IAttachmentField>(FieldType.Attachment);
-      if (attachmentFields.length === 0) {
+      // 获取所有附件字段的ID
+      const fieldMetaList = await table.getFieldMetaList();
+      const attachmentFieldIds = fieldMetaList
+        .filter(field => field.type === FieldType.Attachment)
+        .map(field => field.id);
+      
+      if (attachmentFieldIds.length === 0) {
         setError('当前表格没有附件字段');
         setLoading(false);
         return;
       }
-      setAttachmentFieldId(attachmentFields[0].id);
+      
+      attachmentFieldIdsRef.current = new Set(attachmentFieldIds);
 
-      // 获取当前视图的记录
-      const view = await table.getActiveView();
-      const visibleRecordIdList = await view.getVisibleRecordIdList();
-      // 过滤掉可能的 undefined 值
-      const visibleRecordIds = visibleRecordIdList.filter((id): id is string => id !== undefined);
-      setRecordIds(visibleRecordIds);
-      setTotalRecords(visibleRecordIds.length);
-
-      // 获取当前选中的记录
+      // 获取当前选中
       const selection = await bitable.base.getSelection();
-      if (selection.recordId && visibleRecordIds.includes(selection.recordId)) {
-        const index = visibleRecordIds.indexOf(selection.recordId);
-        setCurrentIndex(index);
-        await loadAttachments(table, attachmentFields[0].id, selection.recordId);
-      } else if (visibleRecordIds.length > 0 && visibleRecordIds[0]) {
-        setCurrentIndex(0);
-        await loadAttachments(table, attachmentFields[0].id, visibleRecordIds[0]);
+      if (selection.fieldId && selection.recordId) {
+        await loadCellAttachments(table, selection.fieldId, selection.recordId);
       }
       
       setLoading(false);
@@ -88,18 +74,45 @@ export function useBitable(): UseBitableResult {
   };
 
   const handleSelectionChange = async (event: { data: Selection }) => {
-    const { recordId } = event.data;
-    if (!recordId || !tableRef.current || !attachmentFieldId) return;
+    const { fieldId, recordId } = event.data;
+    if (!fieldId || !recordId || !tableRef.current) return;
     
-    const index = recordIds.indexOf(recordId);
-    if (index !== -1) {
-      setCurrentIndex(index);
-      await loadAttachments(tableRef.current, attachmentFieldId, recordId);
-    }
+    await loadCellAttachments(tableRef.current, fieldId, recordId);
   };
 
-  const loadAttachments = async (table: ITable, fieldId: string, recordId: string) => {
+  const loadCellAttachments = async (table: ITable, fieldId: string, recordId: string) => {
     try {
+      // 保存当前选中
+      currentSelectionRef.current = { fieldId, recordId };
+      
+      // 获取字段信息
+      const fieldMeta = await table.getFieldMetaById(fieldId);
+      
+      // 检查是否是附件字段
+      if (fieldMeta.type !== FieldType.Attachment) {
+        // 不是附件字段，尝试查找该记录中的第一个有附件的字段
+        const attachmentFieldIds = Array.from(attachmentFieldIdsRef.current);
+        
+        for (const attFieldId of attachmentFieldIds) {
+          const cellValue = await table.getCellValue(attFieldId, recordId);
+          if (cellValue && Array.isArray(cellValue) && cellValue.length > 0) {
+            const attFieldMeta = await table.getFieldMetaById(attFieldId);
+            setFieldName(attFieldMeta.name);
+            currentSelectionRef.current = { fieldId: attFieldId, recordId };
+            await processAttachments(table, attFieldId, recordId, cellValue);
+            return;
+          }
+        }
+        
+        // 该记录没有任何附件
+        setFieldName('附件预览');
+        setAttachments([]);
+        setAttachmentUrls(new Map());
+        return;
+      }
+      
+      // 是附件字段
+      setFieldName(fieldMeta.name);
       const cellValue = await table.getCellValue(fieldId, recordId);
       
       if (!cellValue || !Array.isArray(cellValue) || cellValue.length === 0) {
@@ -108,25 +121,37 @@ export function useBitable(): UseBitableResult {
         return;
       }
 
-      const attachmentList: AttachmentInfo[] = cellValue.map((item: any) => ({
-        token: item.token,
-        name: item.name,
-        size: item.size || 0,
-        type: item.type || '',
-        timeStamp: item.timeStamp || Date.now()
-      }));
-      
-      setAttachments(attachmentList);
-
-      // 批量获取附件URL
-      const tokens = attachmentList.map(a => a.token);
-      const urls = await getAttachmentUrls(table, tokens, fieldId, recordId);
-      setAttachmentUrls(urls);
+      await processAttachments(table, fieldId, recordId, cellValue);
     } catch (err) {
       console.error('加载附件失败:', err);
       setAttachments([]);
       setAttachmentUrls(new Map());
     }
+  };
+
+  const processAttachments = async (
+    table: ITable, 
+    fieldId: string, 
+    recordId: string, 
+    cellValue: unknown[]
+  ) => {
+    const attachmentList: AttachmentInfo[] = cellValue.map((item: unknown) => {
+      const att = item as { token: string; name: string; size?: number; type?: string; timeStamp?: number };
+      return {
+        token: att.token,
+        name: att.name,
+        size: att.size || 0,
+        type: att.type || '',
+        timeStamp: att.timeStamp || Date.now()
+      };
+    });
+    
+    setAttachments(attachmentList);
+
+    // 批量获取附件URL
+    const tokens = attachmentList.map(a => a.token);
+    const urls = await getAttachmentUrls(table, tokens, fieldId, recordId);
+    setAttachmentUrls(urls);
   };
 
   const getAttachmentUrls = async (
@@ -139,7 +164,6 @@ export function useBitable(): UseBitableResult {
     const urlMap = new Map<string, string>();
     const tokensToFetch: string[] = [];
 
-    // 检查缓存
     tokens.forEach(token => {
       const cached = urlCacheRef.current[token];
       if (cached && cached.expireAt > now) {
@@ -149,7 +173,6 @@ export function useBitable(): UseBitableResult {
       }
     });
 
-    // 获取未缓存的URL
     if (tokensToFetch.length > 0) {
       try {
         const urls = await table.getCellAttachmentUrls(tokensToFetch, fieldId, recordId);
@@ -172,11 +195,12 @@ export function useBitable(): UseBitableResult {
   };
 
   const refreshAttachmentUrl = useCallback(async (token: string): Promise<string | null> => {
-    if (!tableRef.current || !attachmentFieldId || recordIds.length === 0) return null;
+    if (!tableRef.current || !currentSelectionRef.current) return null;
+    
+    const { fieldId, recordId } = currentSelectionRef.current;
     
     try {
-      const recordId = recordIds[currentIndex];
-      const urls = await tableRef.current.getCellAttachmentUrls([token], attachmentFieldId, recordId);
+      const urls = await tableRef.current.getCellAttachmentUrls([token], fieldId, recordId);
       if (urls[0]) {
         urlCacheRef.current[token] = {
           url: urls[0],
@@ -189,38 +213,14 @@ export function useBitable(): UseBitableResult {
       console.error('刷新URL失败:', err);
     }
     return null;
-  }, [currentIndex, recordIds, attachmentFieldId]);
-
-  const goToRecord = useCallback(async (index: number) => {
-    if (index < 0 || index >= totalRecords || !tableRef.current || !attachmentFieldId) return;
-    
-    setCurrentIndex(index);
-    const recordId = recordIds[index];
-    await loadAttachments(tableRef.current, attachmentFieldId, recordId);
-  }, [totalRecords, recordIds, attachmentFieldId]);
-
-  const goNext = useCallback(() => {
-    if (currentIndex < totalRecords - 1) {
-      goToRecord(currentIndex + 1);
-    }
-  }, [currentIndex, totalRecords, goToRecord]);
-
-  const goPrev = useCallback(() => {
-    if (currentIndex > 0) {
-      goToRecord(currentIndex - 1);
-    }
-  }, [currentIndex, goToRecord]);
+  }, []);
 
   return {
     loading,
     error,
-    currentIndex,
-    totalRecords,
     attachments,
     attachmentUrls,
-    goToRecord,
-    goNext,
-    goPrev,
+    fieldName,
     refreshAttachmentUrl
   };
 }

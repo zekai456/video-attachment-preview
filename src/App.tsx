@@ -1,23 +1,15 @@
-import { useState } from 'react';
 import { Header } from './components/Header';
-import { TabBar } from './components/TabBar';
 import { PreviewArea } from './components/PreviewArea';
 import { EmptyState } from './components/EmptyState';
 import { useBitable } from './hooks/useBitable';
-import { TabType } from './types';
 
 function App() {
-  const [activeTab, setActiveTab] = useState<TabType>('attachment');
-  
   const {
     loading,
     error,
-    currentIndex,
-    totalRecords,
     attachments,
     attachmentUrls,
-    goNext,
-    goPrev,
+    fieldName,
     refreshAttachmentUrl
   } = useBitable();
 
@@ -40,15 +32,8 @@ function App() {
   return (
     <div className="h-full flex flex-col bg-white overflow-hidden">
       <Header
-        currentIndex={currentIndex}
-        totalRecords={totalRecords}
-        onPrev={goPrev}
-        onNext={goNext}
-      />
-      
-      <TabBar
-        activeTab={activeTab}
-        onTabChange={setActiveTab}
+        fieldName={fieldName}
+        attachmentCount={attachments.length}
       />
       
       <PreviewArea
