@@ -129,16 +129,27 @@ function EditableCell({
     );
   }
 
-  // 显示模式
-  if (isFilterField && value !== '-') {
-    const isPass = value === '审核通过';
+  // 单选字段用彩色标签显示
+  if (isSingleSelect && value && value !== '-') {
+    // 根据值选择颜色
+    type TagColor = 'green' | 'red' | 'orange' | 'blue' | 'cyan' | 'purple' | 'pink' | 'amber' | 'lime' | 'teal';
+    const getTagColor = (val: string): TagColor => {
+      if (val.includes('通过') || val.includes('完成') || val.includes('成功')) return 'green';
+      if (val.includes('不通过') || val.includes('失败') || val.includes('拒绝')) return 'red';
+      if (val.includes('待') || val.includes('进行中')) return 'orange';
+      // 根据字符串哈希选择颜色
+      const colors: TagColor[] = ['blue', 'cyan', 'purple', 'pink', 'amber', 'lime', 'teal'];
+      const hash = val.split('').reduce((acc, char) => acc + char.charCodeAt(0), 0);
+      return colors[hash % colors.length];
+    };
+    
     return (
       <div 
         onDoubleClick={handleDoubleClick}
         style={{ cursor: onSave ? 'pointer' : 'default', display: 'inline-block' }}
       >
         <Tag 
-          color={isPass ? 'green' : 'orange'}
+          color={getTagColor(value)}
           size="small"
         >
           {value}

@@ -210,6 +210,13 @@ function App() {
       const fieldMeta = await table.getFieldMetaList();
       console.log('[v2] Field meta count:', fieldMeta.length);
       
+      // 更新字段信息（确保有字段类型用于正确显示）
+      setFieldInfos(fieldMeta.map((f: { id: string; name: string; type: number }) => ({
+        id: f.id,
+        name: f.name,
+        type: f.type,
+      })));
+      
       // 使用 getRecords 批量获取数据（更稳定）
       console.log('[v2] Calling getRecords...');
       const result = await table.getRecords({
