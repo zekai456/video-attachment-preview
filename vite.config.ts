@@ -1,18 +1,22 @@
-import { defineConfig } from 'vite'
-import react from '@vitejs/plugin-react'
+import { defineConfig } from 'vite';
+import react from '@vitejs/plugin-react';
+import { semiTheming } from 'vite-plugin-semi-theming';
 
-// GitHub 仓库名，部署时需要修改为你的仓库名
-const repoName = 'video-attachment-preview'
+const repoName = 'video-attachment-preview';
 
 export default defineConfig({
-  plugins: [react()],
-  // GitHub Pages 部署时需要设置 base 路径
-  base: process.env.NODE_ENV === 'production' ? `/${repoName}/` : '/',
+  base: process.env.NODE_ENV === 'production' ? `/${repoName}/` : './',
+  plugins: [
+    react(),
+    semiTheming({
+      theme: '@semi-bot/semi-theme-feishu-dashboard',
+    }),
+  ],
   server: {
+    host: '0.0.0.0',
     port: 3000,
-    host: true
   },
   build: {
-    outDir: 'dist'
-  }
-})
+    outDir: 'dist',
+  },
+});
