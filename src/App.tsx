@@ -204,20 +204,26 @@ function App() {
 
   const loadRecords = async (tableId: string, viewId: string, attachmentFieldId: string, filterFieldId?: string) => {
     try {
-      console.log('Loading records...', { tableId, viewId, attachmentFieldId, filterFieldId });
+      console.log('[v2] Loading records...', { tableId, viewId, attachmentFieldId, filterFieldId });
       const table = await bitable.base.getTableById(tableId);
       
       const fieldMeta = await table.getFieldMetaList();
-      console.log('Field meta:', fieldMeta);
+      console.log('[v2] Field meta count:', fieldMeta.length);
       
       // 使用 getRecords 批量获取数据（更稳定）
-      const { records: rawRecords } = await table.getRecords({
+      console.log('[v2] Calling getRecords...');
+      const result = await table.getRecords({
         viewId,
         pageSize: 500,
       });
-      console.log('Raw records count:', rawRecords.length);
+      const rawRecords = result?.records || [];
+      console.log('[v2] Raw records count:', rawRecords.length);
       
       const recordList: RecordData[] = [];
+      
+      if (rawRecords.length > 0) {
+        console.log('[v2] First record sample:', rawRecords[0]);
+      }
       
       for (const record of rawRecords) {
         const recordId = record.recordId;
