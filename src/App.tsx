@@ -184,22 +184,23 @@ function App() {
 
   const loadRecords = async (tableId: string, viewId: string, attachmentFieldId: string, filterFieldId?: string) => {
     try {
+      console.log('Loading records...', { tableId, viewId, attachmentFieldId, filterFieldId });
       const table = await bitable.base.getTableById(tableId);
       const view = await table.getViewById(viewId);
       const recordIdList = await view.getVisibleRecordIdList();
       
       const fieldMeta = await table.getFieldMetaList();
-      const displayFields = fieldMeta.slice(0, 5); // 显示前5个字段
+      console.log('Field meta:', fieldMeta);
       
       const recordList: RecordData[] = [];
       
       for (const recordId of recordIdList) {
         if (!recordId) continue;
         
-        // 获取各字段的值
+        // 获取所有字段的值
         const values: Record<string, string | null> = {};
         
-        for (const field of displayFields) {
+        for (const field of fieldMeta) {
           try {
             const val = await table.getCellValue(field.id, recordId);
             if (val === null || val === undefined) {
@@ -208,17 +209,23 @@ function App() {
               if (val.length === 0) {
                 values[field.id] = null;
               } else {
-                const first = val[0] as { text?: string; name?: string } | string;
+                const first = val[0] as { text?: string; name?: string; id?: string } | string;
                 if (typeof first === 'object' && first !== null) {
+                  // 优先使用 text，然后是 name
                   values[field.id] = first.text || first.name || JSON.stringify(first);
                 } else {
                   values[field.id] = String(first);
                 }
               }
+            } else if (typeof val === 'object' && val !== null) {
+              // 单选字段可能直接返回对象 { id, text }
+              const obj = val as { text?: string; name?: string };
+              values[field.id] = obj.text || obj.name || JSON.stringify(val);
             } else {
               values[field.id] = String(val);
             }
-          } catch {
+          } catch (e) {
+            console.error(`Error getting value for field ${field.id}:`, e);
             values[field.id] = null;
           }
         }
@@ -357,21 +364,42 @@ function App() {
   // 单元格编辑
   const handleCellEdit = useCallback(async (recordId: string, fieldId: string, value: string) => {
     try {
+      console.log('Editing cell:', { recordId, fieldId, value });
       const table = await bitable.base.getTableById(selectedTable);
-      // 根据字段类型设置值
+      
+      // 获取字段元数据来确定类型
       const fieldMeta = fieldInfos.find(f => f.id === fieldId);
+      const fieldType = fieldMeta?.type;
+      console.log('Field type:', fieldType);
       
       let cellValue: unknown;
-      if (fieldMeta?.type === 3) {
-        // 单选字段 - 需要用对象格式
-        cellValue = { text: value };
-      } else if (fieldMeta?.type === 1) {
-        // 文本字段 - 需要用数组格式
+      
+      // FieldType: 1=Text, 3=SingleSelect, 4=MultiSelect, 11=SingleLink, ...
+      if (fieldType === 3) {
+        // 单选字段 - 先获取选项列表找到对应的选项 ID
+        const field = await table.getFieldById(fieldId);
+        const options = await (field as { getOptions?: () => Promise<{id: string; name: string}[]> }).getOptions?.();
+        console.log('Single select options:', options);
+        
+        if (options) {
+          const option = options.find((o: {id: string; name: string}) => o.name === value);
+          if (option) {
+            cellValue = option.id;
+          } else {
+            console.warn('Option not found for value:', value);
+            cellValue = value;
+          }
+        } else {
+          cellValue = value;
+        }
+      } else if (fieldType === 1) {
+        // 文本字段 - 使用段落格式
         cellValue = [{ type: 'text', text: value }];
       } else {
         cellValue = value;
       }
       
+      console.log('Setting cell value:', cellValue);
       await table.setCellValue(fieldId, recordId, cellValue as never);
       
       // 更新本地数据
@@ -381,6 +409,8 @@ function App() {
         }
         return r;
       }));
+      
+      console.log('Cell edit success');
     } catch (e) {
       console.error('Edit cell failed:', e);
       throw e;
