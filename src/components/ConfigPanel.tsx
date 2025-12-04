@@ -17,11 +17,13 @@ interface ConfigPanelProps {
   selectedView: string;
   selectedField: string;
   filterField: string;
+  visibleFields: string[];
   title: string;
   onTableChange: (value: string) => void;
   onViewChange: (value: string) => void;
   onFieldChange: (value: string) => void;
   onFilterFieldChange: (value: string) => void;
+  onVisibleFieldsChange: (values: string[]) => void;
   onTitleChange: (value: string) => void;
   onPreview: () => void;
   onSave: () => void;
@@ -36,11 +38,13 @@ export function ConfigPanel({
   selectedView,
   selectedField,
   filterField,
+  visibleFields,
   title,
   onTableChange,
   onViewChange,
   onFieldChange,
   onFilterFieldChange,
+  onVisibleFieldsChange,
   onTitleChange,
   onPreview,
   onSave,
@@ -136,6 +140,24 @@ export function ConfigPanel({
                     将排除该字段值为"审核通过"的记录
                   </Text>
                 )}
+              </div>
+
+              <div style={{ marginBottom: 16 }}>
+                <Text type="tertiary" size="small" style={{ display: 'block', marginBottom: 8 }}>可见字段</Text>
+                <Select
+                  style={{ width: '100%' }}
+                  value={visibleFields}
+                  onChange={(values) => onVisibleFieldsChange(values as string[])}
+                  optionList={allFields}
+                  placeholder="选择要显示的字段"
+                  disabled={!selectedTable}
+                  multiple
+                  maxTagCount={3}
+                  filter
+                />
+                <Text type="tertiary" size="small" style={{ marginTop: 4, display: 'block' }}>
+                  选择在左侧表格中显示的字段，不选则显示前5个
+                </Text>
               </div>
             </div>
           </div>

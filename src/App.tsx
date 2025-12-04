@@ -18,6 +18,7 @@ interface ICustomConfig {
   viewId: string;
   attachmentFieldId: string;
   filterFieldId: string;
+  visibleFieldIds: string[];
   title: string;
 }
 
@@ -49,6 +50,7 @@ function App() {
   const [selectedView, setSelectedView] = useState<string>('');
   const [selectedField, setSelectedField] = useState<string>('');
   const [filterField, setFilterField] = useState<string>('');
+  const [visibleFields, setVisibleFields] = useState<string[]>([]);
   const [title, setTitle] = useState<string>('视频预览');
   
   // 数据相关
@@ -91,7 +93,7 @@ function App() {
           const config = await dashboard.getConfig();
           const customConfig = config?.customConfig as ICustomConfig | undefined;
           if (customConfig) {
-            const { tableId, viewId, attachmentFieldId, filterFieldId, title: savedTitle } = customConfig;
+            const { tableId, viewId, attachmentFieldId, filterFieldId, visibleFieldIds, title: savedTitle } = customConfig;
             if (tableId) {
               setSelectedTable(tableId);
               await loadTableData(tableId);
@@ -99,6 +101,7 @@ function App() {
               if (viewId) setSelectedView(viewId);
               if (attachmentFieldId) setSelectedField(attachmentFieldId);
               if (filterFieldId) setFilterField(filterFieldId);
+              if (visibleFieldIds) setVisibleFields(visibleFieldIds);
               if (savedTitle) setTitle(savedTitle);
               
               // 加载记录数据
@@ -333,6 +336,7 @@ function App() {
           viewId: selectedView,
           attachmentFieldId: selectedField,
           filterFieldId: filterField,
+          visibleFieldIds: visibleFields,
           title,
         },
       };
@@ -345,6 +349,43 @@ function App() {
   const handleTitleChange = (value: string) => {
     setTitle(value);
   };
+
+  const handleVisibleFieldsChange = (values: string[]) => {
+    setVisibleFields(values);
+  };
+
+  // 单元格编辑
+  const handleCellEdit = useCallback(async (recordId: string, fieldId: string, value: string) => {
+    try {
+      const table = await bitable.base.getTableById(selectedTable);
+      // 根据字段类型设置值
+      const fieldMeta = fieldInfos.find(f => f.id === fieldId);
+      
+      let cellValue: unknown;
+      if (fieldMeta?.type === 3) {
+        // 单选字段 - 需要用对象格式
+        cellValue = { text: value };
+      } else if (fieldMeta?.type === 1) {
+        // 文本字段 - 需要用数组格式
+        cellValue = [{ type: 'text', text: value }];
+      } else {
+        cellValue = value;
+      }
+      
+      await table.setCellValue(fieldId, recordId, cellValue as never);
+      
+      // 更新本地数据
+      setRecords(prev => prev.map(r => {
+        if (r.id === recordId) {
+          return { ...r, values: { ...r.values, [fieldId]: value } };
+        }
+        return r;
+      }));
+    } catch (e) {
+      console.error('Edit cell failed:', e);
+      throw e;
+    }
+  }, [selectedTable, fieldInfos]);
 
   const handlePreview = async () => {
     if (selectedTable && selectedView && selectedField) {
@@ -375,9 +416,11 @@ function App() {
           <ViewPanel
             records={records}
             fields={fieldInfos}
+            visibleFieldIds={visibleFields}
             selectedRecord={selectedRecord}
             videoUrl={videoUrl}
             onRecordSelect={(id: string) => handleRecordSelect(selectedTable, selectedField, id)}
+            onCellEdit={handleCellEdit}
             filterFieldId={filterField}
             filterFieldName={filterFieldName}
           />
@@ -392,11 +435,13 @@ function App() {
             selectedView={selectedView}
             selectedField={selectedField}
             filterField={filterField}
+            visibleFields={visibleFields}
             title={title}
             onTableChange={handleTableChange}
             onViewChange={handleViewChange}
             onFieldChange={handleFieldChange}
             onFilterFieldChange={handleFilterFieldChange}
+            onVisibleFieldsChange={handleVisibleFieldsChange}
             onTitleChange={handleTitleChange}
             onPreview={handlePreview}
             onSave={handleSaveConfig}
@@ -411,9 +456,11 @@ function App() {
     <ViewPanel
       records={records}
       fields={fieldInfos}
+      visibleFieldIds={visibleFields}
       selectedRecord={selectedRecord}
       videoUrl={videoUrl}
       onRecordSelect={(id: string) => handleRecordSelect(selectedTable, selectedField, id)}
+      onCellEdit={handleCellEdit}
       filterFieldId={filterField}
       filterFieldName={filterFieldName}
       fullWidth
