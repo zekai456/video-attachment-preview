@@ -182,58 +182,51 @@ function App() {
     }
   };
 
+  // 解析单元格值为字符串
+  const parseCellValue = (val: unknown): string | null => {
+    if (val === null || val === undefined) {
+      return null;
+    }
+    if (Array.isArray(val)) {
+      if (val.length === 0) return null;
+      const first = val[0] as { text?: string; name?: string } | string;
+      if (typeof first === 'object' && first !== null) {
+        return first.text || first.name || JSON.stringify(first);
+      }
+      return String(first);
+    }
+    if (typeof val === 'object' && val !== null) {
+      const obj = val as { text?: string; name?: string };
+      return obj.text || obj.name || JSON.stringify(val);
+    }
+    return String(val);
+  };
+
   const loadRecords = async (tableId: string, viewId: string, attachmentFieldId: string, filterFieldId?: string) => {
     try {
       console.log('Loading records...', { tableId, viewId, attachmentFieldId, filterFieldId });
       const table = await bitable.base.getTableById(tableId);
-      const view = await table.getViewById(viewId);
-      const recordIdList = await view.getVisibleRecordIdList();
       
       const fieldMeta = await table.getFieldMetaList();
       console.log('Field meta:', fieldMeta);
       
-      // 只保留已知支持 getCellValue 的字段类型（使用白名单）
-      // 1=文本, 2=数字, 3=单选, 4=多选, 5=日期, 7=复选框, 11=人员, 13=电话, 15=URL, 17=附件, 99=自动编号
-      const supportedTypes = [1, 2, 3, 4, 5, 7, 11, 13, 15, 17, 99];
-      const supportedFields = fieldMeta.filter(f => supportedTypes.includes(f.type));
-      console.log('Supported fields:', supportedFields.map(f => ({ id: f.id, name: f.name, type: f.type })));
+      // 使用 getRecords 批量获取数据（更稳定）
+      const { records: rawRecords } = await table.getRecords({
+        viewId,
+        pageSize: 500,
+      });
+      console.log('Raw records count:', rawRecords.length);
       
       const recordList: RecordData[] = [];
       
-      for (const recordId of recordIdList) {
-        if (!recordId) continue;
+      for (const record of rawRecords) {
+        const recordId = record.recordId;
+        const fields = record.fields || {};
         
-        // 获取支持的字段的值
+        // 解析所有字段值
         const values: Record<string, string | null> = {};
-        
-        for (const field of supportedFields) {
-          try {
-            const val = await table.getCellValue(field.id, recordId);
-            if (val === null || val === undefined) {
-              values[field.id] = null;
-            } else if (Array.isArray(val)) {
-              if (val.length === 0) {
-                values[field.id] = null;
-              } else {
-                const first = val[0] as { text?: string; name?: string; id?: string } | string;
-                if (typeof first === 'object' && first !== null) {
-                  // 优先使用 text，然后是 name
-                  values[field.id] = first.text || first.name || JSON.stringify(first);
-                } else {
-                  values[field.id] = String(first);
-                }
-              }
-            } else if (typeof val === 'object' && val !== null) {
-              // 单选字段可能直接返回对象 { id, text }
-              const obj = val as { text?: string; name?: string };
-              values[field.id] = obj.text || obj.name || JSON.stringify(val);
-            } else {
-              values[field.id] = String(val);
-            }
-          } catch (e) {
-            console.warn(`Skip field ${field.id} (type ${field.type}):`, e);
-            values[field.id] = null;
-          }
+        for (const fieldId of Object.keys(fields)) {
+          values[fieldId] = parseCellValue(fields[fieldId]);
         }
         
         // 检查筛选条件
@@ -245,7 +238,7 @@ function App() {
         }
         
         // 检查是否有视频附件
-        const attVal = await table.getCellValue(attachmentFieldId, recordId);
+        const attVal = fields[attachmentFieldId];
         let hasVideo = false;
         if (attVal && Array.isArray(attVal) && attVal.length > 0) {
           hasVideo = attVal.some((item) => {
@@ -260,6 +253,7 @@ function App() {
         recordList.push({ id: recordId, values, hasVideo });
       }
       
+      console.log('Processed records:', recordList.length);
       setRecords(recordList);
       
       // 自动选择第一条有视频的记录
