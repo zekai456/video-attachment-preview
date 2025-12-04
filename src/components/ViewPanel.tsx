@@ -1,8 +1,25 @@
-import { useState, useCallback, useEffect } from 'react';
+import { useState, useCallback, useEffect, useMemo } from 'react';
 import { Table, Typography, Tag, Input, Select } from '@douyinfe/semi-ui';
-import { IconVideo } from '@douyinfe/semi-icons';
+import { IconVideo, IconLink, IconImage, IconCheckboxTick, IconUser, IconCalendar, IconHash } from '@douyinfe/semi-icons';
 
 const { Text } = Typography;
+
+// 字段类型图标映射
+const getFieldIcon = (type: number) => {
+  const iconStyle = { fontSize: 12, marginRight: 4, color: 'var(--semi-color-text-2)' };
+  switch (type) {
+    case 1: return <span style={iconStyle}>A</span>; // 文本
+    case 2: return <IconHash style={iconStyle} />; // 数字
+    case 3: return <span style={iconStyle}>⊙</span>; // 单选
+    case 4: return <span style={iconStyle}>☰</span>; // 多选
+    case 5: return <IconCalendar style={iconStyle} />; // 日期
+    case 7: return <IconCheckboxTick style={iconStyle} />; // 复选框
+    case 11: return <IconUser style={iconStyle} />; // 人员
+    case 15: return <IconLink style={iconStyle} />; // URL
+    case 17: return <IconImage style={iconStyle} />; // 附件
+    default: return null;
+  }
+};
 
 // 记录数据结构
 export interface RecordData {
@@ -85,9 +102,6 @@ function EditableCell({
 
   // 单选字段类型 (type === 3)
   const isSingleSelect = fieldType === 3;
-  
-  // 调试日志
-  console.log('[EditableCell]', { fieldId, fieldType, isSingleSelect, hasOptions: !!fieldOptions, optionsCount: fieldOptions?.length });
   
   if (editing) {
     // 单选字段使用下拉选择框
@@ -223,23 +237,44 @@ export function ViewPanel({
     ? fields.filter(f => visibleFieldIds.includes(f.id))
     : fields.slice(0, 5);
 
-  // 动态生成表格列
-  const columns = [
+  // 动态生成表格列（使用 useMemo 优化性能）
+  const columns = useMemo(() => [
+    // 行号列
+    {
+      title: '#',
+      dataIndex: 'rowIndex',
+      width: 50,
+      fixed: 'left' as const,
+      render: (_: unknown, __: RecordData, index: number) => (
+        <Text type="tertiary" size="small" style={{ fontFamily: 'monospace' }}>
+          {index + 1}
+        </Text>
+      ),
+    },
+    // 视频图标列
     {
       title: '',
       dataIndex: 'hasVideo',
-      width: 36,
+      width: 32,
+      fixed: 'left' as const,
       render: (hasVideo: boolean) => (
         <IconVideo style={{ 
+          fontSize: 14,
           color: hasVideo ? 'var(--semi-color-primary)' : 'var(--semi-color-text-3)',
           opacity: hasVideo ? 1 : 0.3 
         }} />
       ),
     },
+    // 数据字段列
     ...displayFields.map((field) => ({
-      title: field.name,
+      title: (
+        <div style={{ display: 'flex', alignItems: 'center' }}>
+          {getFieldIcon(field.type)}
+          <span>{field.name}</span>
+        </div>
+      ),
       dataIndex: `field_${field.id}`,
-      width: field.id === filterFieldId ? 120 : undefined,
+      width: 140,
       ellipsis: true,
       render: (_: unknown, record: RecordData) => {
         const value = record.values[field.id] || '-';
@@ -255,7 +290,7 @@ export function ViewPanel({
         );
       },
     })),
-  ];
+  ], [displayFields, filterFieldId, onCellEdit]);
 
   return (
     <div 
@@ -293,20 +328,21 @@ export function ViewPanel({
           </Text>
         </div>
         
-        <div style={{ flex: 1, overflow: 'auto' }}>
+        <div style={{ flex: 1, overflow: 'hidden' }}>
           <Table
             columns={columns}
             dataSource={records}
             rowKey="id"
             pagination={false}
             size="small"
-            scroll={{ x: 'max-content' }}
+            scroll={{ x: 'max-content', y: 'calc(100vh - 200px)' }}
+            virtualized
             onRow={(record) => ({
               onClick: () => record && onRecordSelect(record.id),
               style: {
                 cursor: 'pointer',
                 backgroundColor: record?.id === selectedRecord 
-                  ? 'var(--semi-color-primary-light-default)' 
+                  ? 'rgba(var(--semi-blue-0), 0.5)' 
                   : undefined,
               },
             })}
@@ -315,6 +351,9 @@ export function ViewPanel({
                 暂无数据
               </div>
             }
+            style={{ 
+              '--semi-table-thead-bg': 'var(--semi-color-bg-1)',
+            } as React.CSSProperties}
           />
         </div>
       </div>
