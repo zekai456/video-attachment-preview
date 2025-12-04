@@ -192,11 +192,11 @@ function App() {
       const fieldMeta = await table.getFieldMetaList();
       console.log('Field meta:', fieldMeta);
       
-      // 过滤掉不支持 getCellValue 的字段类型
-      // 18=按钮, 20=公式, 23=查找引用, 1001=创建时间, 1002=修改时间, 1003=创建人, 1004=修改人
-      const unsupportedTypes = [18, 20, 23, 1001, 1002, 1003, 1004];
-      const supportedFields = fieldMeta.filter(f => !unsupportedTypes.includes(f.type));
-      console.log('Supported fields:', supportedFields.length);
+      // 只保留已知支持 getCellValue 的字段类型（使用白名单）
+      // 1=文本, 2=数字, 3=单选, 4=多选, 5=日期, 7=复选框, 11=人员, 13=电话, 15=URL, 17=附件, 99=自动编号
+      const supportedTypes = [1, 2, 3, 4, 5, 7, 11, 13, 15, 17, 99];
+      const supportedFields = fieldMeta.filter(f => supportedTypes.includes(f.type));
+      console.log('Supported fields:', supportedFields.map(f => ({ id: f.id, name: f.name, type: f.type })));
       
       const recordList: RecordData[] = [];
       
