@@ -71,7 +71,13 @@ function App() {
       
       // 获取仪表盘状态
       const currentState = dashboard.state as DashboardState;
+      console.log('Dashboard state:', currentState);
       setState(currentState);
+      
+      // 如果状态为空或未知，默认进入配置状态
+      if (!currentState || (currentState !== DashboardState.View && currentState !== DashboardState.FullScreen)) {
+        setState(DashboardState.Config);
+      }
       
       // 获取所有表
       const tableList = await bitable.base.getTableList();
@@ -316,8 +322,12 @@ function App() {
     );
   }
 
-  // 配置状态（Create 或 Config）
-  if (state === DashboardState.Create || state === DashboardState.Config) {
+  console.log('Current state for render:', state);
+
+  // 配置状态（Create 或 Config）- 显示配置面板
+  const isConfigMode = state === DashboardState.Create || state === DashboardState.Config;
+  
+  if (isConfigMode) {
     return (
       <div className="dashboard-container">
         <div className="preview-area">
