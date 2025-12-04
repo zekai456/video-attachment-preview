@@ -16,6 +16,7 @@ export interface FieldInfo {
   id: string;
   name: string;
   type: number;
+  options?: { id: string; name: string }[]; // 单选字段的选项
 }
 
 interface ViewPanelProps {
@@ -36,15 +37,15 @@ function EditableCell({
   value,
   fieldId,
   fieldType,
+  fieldOptions,
   recordId,
-  isFilterField,
   onSave,
 }: {
   value: string;
   fieldId: string;
   fieldType: number;
+  fieldOptions?: { id: string; name: string }[];
   recordId: string;
-  isFilterField: boolean;
   onSave?: (recordId: string, fieldId: string, value: string) => Promise<void>;
 }) {
   const [editing, setEditing] = useState(false);
@@ -86,8 +87,8 @@ function EditableCell({
   const isSingleSelect = fieldType === 3;
   
   if (editing) {
-    if (isSingleSelect && isFilterField) {
-      // 审核状态字段用下拉框
+    // 单选字段使用下拉选择框
+    if (isSingleSelect && fieldOptions && fieldOptions.length > 0) {
       return (
         <Select
           size="small"
@@ -102,19 +103,17 @@ function EditableCell({
               });
             }
           }}
-          optionList={[
-            { value: '待审核', label: '待审核' },
-            { value: '审核通过', label: '审核通过' },
-            { value: '审核不通过', label: '审核不通过' },
-          ]}
-          style={{ width: 100 }}
+          optionList={fieldOptions.map(opt => ({ value: opt.name, label: opt.name }))}
+          style={{ width: 120 }}
           autoFocus
           onBlur={() => setEditing(false)}
           disabled={saving}
+          filter
         />
       );
     }
     
+    // 其他字段使用文本输入
     return (
       <Input
         size="small"
@@ -211,8 +210,8 @@ export function ViewPanel({
             value={value}
             fieldId={field.id}
             fieldType={field.type}
+            fieldOptions={field.options}
             recordId={record.id}
-            isFilterField={field.id === filterFieldId}
             onSave={onCellEdit}
           />
         );

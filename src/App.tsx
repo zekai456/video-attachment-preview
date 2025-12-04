@@ -210,12 +210,32 @@ function App() {
       const fieldMeta = await table.getFieldMetaList();
       console.log('[v2] Field meta count:', fieldMeta.length);
       
-      // 更新字段信息（确保有字段类型用于正确显示）
-      setFieldInfos(fieldMeta.map((f: { id: string; name: string; type: number }) => ({
-        id: f.id,
-        name: f.name,
-        type: f.type,
-      })));
+      // 更新字段信息，包括单选字段的选项
+      const fieldInfosWithOptions: FieldInfo[] = [];
+      for (const f of fieldMeta) {
+        const info: FieldInfo = {
+          id: f.id,
+          name: f.name,
+          type: f.type,
+        };
+        
+        // 如果是单选字段 (type === 3)，获取选项列表
+        if (f.type === 3) {
+          try {
+            const field = await table.getFieldById(f.id);
+            const options = await (field as { getOptions?: () => Promise<{id: string; name: string}[]> }).getOptions?.();
+            if (options) {
+              info.options = options;
+              console.log(`[v2] Field ${f.name} options:`, options.map(o => o.name));
+            }
+          } catch (e) {
+            console.warn(`[v2] Failed to get options for field ${f.name}:`, e);
+          }
+        }
+        
+        fieldInfosWithOptions.push(info);
+      }
+      setFieldInfos(fieldInfosWithOptions);
       
       // 使用 getRecords 批量获取数据（更稳定）
       console.log('[v2] Calling getRecords...');
