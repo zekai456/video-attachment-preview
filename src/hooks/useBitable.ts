@@ -2,23 +2,24 @@ import { useState, useEffect, useCallback, useRef } from 'react';
 import { bitable, FieldType, ITable } from '@lark-base-open/js-sdk';
 import { AttachmentInfo, CachedUrls } from '../types';
 
+export interface RecordItem {
+  id: string;
+  name: string;
+  hasAttachment: boolean;
+}
+
 export function useBitable() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [records, setRecords] = useState<RecordItem[]>([]);
+  const [selectedRecordId, setSelectedRecordId] = useState<string | null>(null);
   const [attachments, setAttachments] = useState<AttachmentInfo[]>([]);
   const [attachmentUrls, setAttachmentUrls] = useState<Map<string, string>>(new Map());
   const [fieldName, setFieldName] = useState('Video Preview');
-  const [recordName, setRecordName] = useState('');
-  const [currentRecordIndex, setCurrentRecordIndex] = useState(0);
-  const [totalRecords, setTotalRecords] = useState(0);
   
   const tableRef = useRef<ITable | null>(null);
-  const currentSelectionRef = useRef<{ fieldId: string; recordId: string } | null>(null);
   const urlCacheRef = useRef<CachedUrls>({});
-  const recordIdsRef = useRef<string[]>([]);
   const attachmentFieldIdRef = useRef<string | null>(null);
-  const primaryFieldIdRef = useRef<string | null>(null);
   const URL_CACHE_DURATION = 8 * 60 * 1000;
 
   useEffect(() => {
@@ -28,16 +29,34 @@ export function useBitable() {
   const init = async () => {
     try {
       setLoading(true);
-      setMessage('Loading...');
       
-      const table = await bitable.base.getActiveTable();
+      const tableList = await bitable.base.getTableList();
+      if (tableList.length === 0) {
+        setError('No tables found');
+        setLoading(false);
+        return;
+      }
+      
+      let table: ITable | null = null;
+      try {
+        table = await bitable.base.getActiveTable();
+      } catch {
+        table = tableList[0];
+      }
+      
+      if (!table) {
+        setError('Cannot access table');
+        setLoading(false);
+        return;
+      }
+      
       tableRef.current = table;
       
       const fieldMetaList = await table.getFieldMetaList();
       
       const attachmentFields = fieldMetaList.filter(f => f.type === FieldType.Attachment);
       if (attachmentFields.length === 0) {
-        setError('No attachment field');
+        setError('No attachment field found');
         setLoading(false);
         return;
       }
@@ -47,89 +66,104 @@ export function useBitable() {
       setFieldName(attachmentField.name);
       
       const primaryField = fieldMetaList.find(f => f.isPrimary);
-      if (primaryField) {
-        primaryFieldIdRef.current = primaryField.id;
+      const primaryFieldId = primaryField?.id;
+      
+      let recordIds: string[] = [];
+      try {
+        const view = await table.getActiveView();
+        const idList = await view.getVisibleRecordIdList();
+        recordIds = idList.filter((id): id is string => id !== undefined);
+      } catch {
+        const idList = await table.getRecordIdList();
+        recordIds = idList.filter((id): id is string => id !== undefined);
       }
       
-      const view = await table.getActiveView();
-      const recordIdList = await view.getVisibleRecordIdList();
-      const recordIds = recordIdList.filter((id): id is string => id !== undefined);
-      
       if (recordIds.length === 0) {
-        setMessage('No records');
+        setError('No records found');
         setLoading(false);
         return;
       }
       
-      recordIdsRef.current = recordIds;
-      setTotalRecords(recordIds.length);
+      const recordItems: RecordItem[] = [];
       
-      setCurrentRecordIndex(0);
-      await loadRecord(table, 0);
+      for (const recordId of recordIds) {
+        let name = '';
+        let hasAttachment = false;
+        
+        if (primaryFieldId) {
+          try {
+            const val = await table.getCellValue(primaryFieldId, recordId);
+            if (val && Array.isArray(val) && val.length > 0) {
+              const first = val[0];
+              if (first && typeof first === 'object' && 'text' in first) {
+                name = String((first as {text?: string}).text || '');
+              } else {
+                name = String(first || '');
+              }
+            } else if (val) {
+              name = String(val);
+            }
+          } catch {}
+        }
+        
+        try {
+          const attVal = await table.getCellValue(attachmentField.id, recordId);
+          hasAttachment = !!(attVal && Array.isArray(attVal) && attVal.length > 0);
+        } catch {}
+        
+        recordItems.push({ id: recordId, name, hasAttachment });
+      }
       
-      setMessage(null);
+      setRecords(recordItems);
+      
+      const firstWithAttachment = recordItems.find(r => r.hasAttachment);
+      if (firstWithAttachment) {
+        setSelectedRecordId(firstWithAttachment.id);
+        await loadAttachments(table, firstWithAttachment.id);
+      }
+      
       setLoading(false);
     } catch (err) {
       console.error('Init failed:', err);
-      setError('Init failed');
+      setError('Init failed: ' + String(err));
       setLoading(false);
     }
   };
 
-  const loadRecord = async (table: ITable, index: number) => {
-    const recordId = recordIdsRef.current[index];
+  const loadAttachments = async (table: ITable, recordId: string) => {
     const fieldId = attachmentFieldIdRef.current;
+    if (!fieldId) return;
     
-    if (!recordId || !fieldId) return;
-    
-    currentSelectionRef.current = { fieldId, recordId };
-    
-    if (primaryFieldIdRef.current) {
-      try {
-        const val = await table.getCellValue(primaryFieldIdRef.current, recordId);
-        if (val && Array.isArray(val) && val.length > 0) {
-          const first = val[0];
-          if (first && typeof first === 'object' && 'text' in first) {
-            setRecordName(String((first as {text?: string}).text || ''));
-          } else {
-            setRecordName(String(first || ''));
-          }
-        } else if (val) {
-          setRecordName(String(val));
-        } else {
-          setRecordName('Record ' + (index + 1));
-        }
-      } catch {
-        setRecordName('Record ' + (index + 1));
+    try {
+      const cellValue = await table.getCellValue(fieldId, recordId);
+      
+      if (!cellValue || !Array.isArray(cellValue) || cellValue.length === 0) {
+        setAttachments([]);
+        setAttachmentUrls(new Map());
+        return;
       }
-    } else {
-      setRecordName('Record ' + (index + 1));
-    }
-    
-    const cellValue = await table.getCellValue(fieldId, recordId);
-    
-    if (!cellValue || !Array.isArray(cellValue) || cellValue.length === 0) {
+
+      const attachmentList: AttachmentInfo[] = cellValue.map((item: unknown) => {
+        const att = item as { token: string; name: string; size?: number; type?: string; timeStamp?: number };
+        return {
+          token: att.token,
+          name: att.name,
+          size: att.size || 0,
+          type: att.type || '',
+          timeStamp: att.timeStamp || Date.now()
+        };
+      });
+      
+      setAttachments(attachmentList);
+
+      const tokens = attachmentList.map(a => a.token);
+      const urls = await getUrls(table, tokens, fieldId, recordId);
+      setAttachmentUrls(urls);
+    } catch (err) {
+      console.error('Load attachments failed:', err);
       setAttachments([]);
       setAttachmentUrls(new Map());
-      return;
     }
-
-    const attachmentList: AttachmentInfo[] = cellValue.map((item: unknown) => {
-      const att = item as { token: string; name: string; size?: number; type?: string; timeStamp?: number };
-      return {
-        token: att.token,
-        name: att.name,
-        size: att.size || 0,
-        type: att.type || '',
-        timeStamp: att.timeStamp || Date.now()
-      };
-    });
-    
-    setAttachments(attachmentList);
-
-    const tokens = attachmentList.map(a => a.token);
-    const urls = await getUrls(table, tokens, fieldId, recordId);
-    setAttachmentUrls(urls);
   };
 
   const getUrls = async (
@@ -169,33 +203,21 @@ export function useBitable() {
     return urlMap;
   };
 
-  const goToRecord = useCallback(async (index: number) => {
-    if (index < 0 || index >= recordIdsRef.current.length) return;
+  const selectRecord = useCallback(async (recordId: string) => {
     if (!tableRef.current) return;
-    
-    setCurrentRecordIndex(index);
-    await loadRecord(tableRef.current, index);
+    setSelectedRecordId(recordId);
+    await loadAttachments(tableRef.current, recordId);
   }, []);
 
-  const goNext = useCallback(() => {
-    if (currentRecordIndex < totalRecords - 1) {
-      goToRecord(currentRecordIndex + 1);
-    }
-  }, [currentRecordIndex, totalRecords, goToRecord]);
-
-  const goPrev = useCallback(() => {
-    if (currentRecordIndex > 0) {
-      goToRecord(currentRecordIndex - 1);
-    }
-  }, [currentRecordIndex, goToRecord]);
-
   const refreshAttachmentUrl = useCallback(async (token: string): Promise<string | null> => {
-    if (!tableRef.current || !currentSelectionRef.current) return null;
-    
-    const { fieldId, recordId } = currentSelectionRef.current;
+    if (!tableRef.current || !selectedRecordId || !attachmentFieldIdRef.current) return null;
     
     try {
-      const urls = await tableRef.current.getCellAttachmentUrls([token], fieldId, recordId);
+      const urls = await tableRef.current.getCellAttachmentUrls(
+        [token], 
+        attachmentFieldIdRef.current, 
+        selectedRecordId
+      );
       if (urls[0]) {
         urlCacheRef.current[token] = {
           url: urls[0],
@@ -208,21 +230,17 @@ export function useBitable() {
       console.error('Refresh URL failed:', err);
     }
     return null;
-  }, []);
+  }, [selectedRecordId]);
 
   return {
     loading,
     error,
-    message,
+    records,
+    selectedRecordId,
     attachments,
     attachmentUrls,
     fieldName,
-    recordName,
-    currentRecordIndex,
-    totalRecords,
-    goNext,
-    goPrev,
-    goToRecord,
+    selectRecord,
     refreshAttachmentUrl
   };
 }
