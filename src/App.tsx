@@ -88,18 +88,29 @@ function App() {
       setTables(tableOptions);
       
       // 尝试读取已保存的配置
+      let configLoaded = false;
       if (currentState !== DashboardState.Create) {
         try {
           const config = await dashboard.getConfig();
+          console.log('[v2] Loaded config:', config);
           const customConfig = config?.customConfig as ICustomConfig | undefined;
           if (customConfig) {
             const { tableId, viewId, attachmentFieldId, filterFieldId, visibleFieldIds, title: savedTitle } = customConfig;
+            console.log('[v2] Custom config:', { tableId, viewId, attachmentFieldId, filterFieldId, visibleFieldIds, savedTitle });
             if (tableId) {
+              configLoaded = true;
               setSelectedTable(tableId);
               await loadTableData(tableId);
               
-              if (viewId) setSelectedView(viewId);
-              if (attachmentFieldId) setSelectedField(attachmentFieldId);
+              // 设置选中的值（在 loadTableData 之后）
+              if (viewId) {
+                console.log('[v2] Setting view:', viewId);
+                setSelectedView(viewId);
+              }
+              if (attachmentFieldId) {
+                console.log('[v2] Setting attachment field:', attachmentFieldId);
+                setSelectedField(attachmentFieldId);
+              }
               if (filterFieldId) setFilterField(filterFieldId);
               if (visibleFieldIds) setVisibleFields(visibleFieldIds);
               if (savedTitle) setTitle(savedTitle);
@@ -111,12 +122,13 @@ function App() {
             }
           }
         } catch (e) {
-          console.log('No saved config, auto select first table');
+          console.log('[v2] No saved config:', e);
         }
       }
       
-      // 如果没有选择表，自动选择第一个
-      if (!selectedTable && tableOptions.length > 0) {
+      // 如果没有加载配置，自动选择第一个表
+      if (!configLoaded && tableOptions.length > 0) {
+        console.log('[v2] No config loaded, auto selecting first table');
         await handleTableChange(tableOptions[0].value);
       }
       

@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useEffect } from 'react';
 import { Table, Typography, Tag, Input, Select } from '@douyinfe/semi-ui';
 import { IconVideo } from '@douyinfe/semi-icons';
 
@@ -85,6 +85,9 @@ function EditableCell({
 
   // 单选字段类型 (type === 3)
   const isSingleSelect = fieldType === 3;
+  
+  // 调试日志
+  console.log('[EditableCell]', { fieldId, fieldType, isSingleSelect, hasOptions: !!fieldOptions, optionsCount: fieldOptions?.length });
   
   if (editing) {
     // 单选字段使用下拉选择框
@@ -180,6 +183,41 @@ export function ViewPanel({
   filterFieldId,
   filterFieldName,
 }: ViewPanelProps) {
+  // 表格宽度百分比
+  const [tableWidth, setTableWidth] = useState(fullWidth ? 45 : 55);
+  const [isDragging, setIsDragging] = useState(false);
+
+  // 处理拖拽分隔条
+  const handleMouseDown = useCallback(() => {
+    setIsDragging(true);
+  }, []);
+
+  const handleMouseMove = useCallback((e: MouseEvent) => {
+    if (!isDragging) return;
+    const container = document.getElementById('view-panel-container');
+    if (!container) return;
+    const rect = container.getBoundingClientRect();
+    const newWidth = ((e.clientX - rect.left) / rect.width) * 100;
+    // 限制范围 30% - 80%
+    setTableWidth(Math.max(30, Math.min(80, newWidth)));
+  }, [isDragging]);
+
+  const handleMouseUp = useCallback(() => {
+    setIsDragging(false);
+  }, []);
+
+  // 监听鼠标事件
+  useEffect(() => {
+    if (isDragging) {
+      window.addEventListener('mousemove', handleMouseMove);
+      window.addEventListener('mouseup', handleMouseUp);
+      return () => {
+        window.removeEventListener('mousemove', handleMouseMove);
+        window.removeEventListener('mouseup', handleMouseUp);
+      };
+    }
+  }, [isDragging, handleMouseMove, handleMouseUp]);
+
   // 确定要显示的字段
   const displayFields = visibleFieldIds.length > 0
     ? fields.filter(f => visibleFieldIds.includes(f.id))
@@ -220,12 +258,19 @@ export function ViewPanel({
   ];
 
   return (
-    <div style={{ display: 'flex', height: '100%', width: '100%' }}>
+    <div 
+      id="view-panel-container"
+      style={{ 
+        display: 'flex', 
+        height: '100%', 
+        width: '100%',
+        userSelect: isDragging ? 'none' : 'auto',
+      }}
+    >
       {/* 左侧表格 */}
       <div style={{ 
-        width: fullWidth ? '45%' : '55%', 
-        minWidth: 300,
-        borderRight: '1px solid var(--semi-color-border)',
+        width: `${tableWidth}%`, 
+        minWidth: 200,
         display: 'flex',
         flexDirection: 'column',
         overflow: 'hidden',
@@ -255,6 +300,7 @@ export function ViewPanel({
             rowKey="id"
             pagination={false}
             size="small"
+            scroll={{ x: 'max-content' }}
             onRow={(record) => ({
               onClick: () => record && onRecordSelect(record.id),
               style: {
@@ -272,6 +318,19 @@ export function ViewPanel({
           />
         </div>
       </div>
+
+      {/* 可拖拽分隔条 */}
+      <div
+        onMouseDown={handleMouseDown}
+        style={{
+          width: 6,
+          cursor: 'col-resize',
+          background: isDragging ? 'var(--semi-color-primary)' : 'var(--semi-color-border)',
+          transition: isDragging ? 'none' : 'background 0.2s',
+          flexShrink: 0,
+        }}
+        title="拖拽调整大小"
+      />
       
       {/* 右侧视频预览 */}
       <div style={{ 
