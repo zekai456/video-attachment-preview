@@ -18,6 +18,7 @@ interface ICustomConfig {
   viewId: string;
   attachmentFieldId: string;
   filterFieldId: string;
+  title: string;
 }
 
 // 选项类型
@@ -48,6 +49,7 @@ function App() {
   const [selectedView, setSelectedView] = useState<string>('');
   const [selectedField, setSelectedField] = useState<string>('');
   const [filterField, setFilterField] = useState<string>('');
+  const [title, setTitle] = useState<string>('视频预览');
   
   // 数据相关
   const [records, setRecords] = useState<RecordData[]>([]);
@@ -89,7 +91,7 @@ function App() {
           const config = await dashboard.getConfig();
           const customConfig = config?.customConfig as ICustomConfig | undefined;
           if (customConfig) {
-            const { tableId, viewId, attachmentFieldId, filterFieldId } = customConfig;
+            const { tableId, viewId, attachmentFieldId, filterFieldId, title: savedTitle } = customConfig;
             if (tableId) {
               setSelectedTable(tableId);
               await loadTableData(tableId);
@@ -97,6 +99,7 @@ function App() {
               if (viewId) setSelectedView(viewId);
               if (attachmentFieldId) setSelectedField(attachmentFieldId);
               if (filterFieldId) setFilterField(filterFieldId);
+              if (savedTitle) setTitle(savedTitle);
               
               // 加载记录数据
               if (viewId && attachmentFieldId) {
@@ -330,12 +333,17 @@ function App() {
           viewId: selectedView,
           attachmentFieldId: selectedField,
           filterFieldId: filterField,
+          title,
         },
       };
       await dashboard.saveConfig(config);
     } catch (e) {
       console.error('Save config failed:', e);
     }
+  };
+
+  const handleTitleChange = (value: string) => {
+    setTitle(value);
   };
 
   const handlePreview = async () => {
@@ -384,10 +392,12 @@ function App() {
             selectedView={selectedView}
             selectedField={selectedField}
             filterField={filterField}
+            title={title}
             onTableChange={handleTableChange}
             onViewChange={handleViewChange}
             onFieldChange={handleFieldChange}
             onFilterFieldChange={handleFilterFieldChange}
+            onTitleChange={handleTitleChange}
             onPreview={handlePreview}
             onSave={handleSaveConfig}
           />
