@@ -192,15 +192,21 @@ function App() {
       const fieldMeta = await table.getFieldMetaList();
       console.log('Field meta:', fieldMeta);
       
+      // 过滤掉不支持 getCellValue 的字段类型
+      // 18=按钮, 20=公式, 23=查找引用, 1001=创建时间, 1002=修改时间, 1003=创建人, 1004=修改人
+      const unsupportedTypes = [18, 20, 23, 1001, 1002, 1003, 1004];
+      const supportedFields = fieldMeta.filter(f => !unsupportedTypes.includes(f.type));
+      console.log('Supported fields:', supportedFields.length);
+      
       const recordList: RecordData[] = [];
       
       for (const recordId of recordIdList) {
         if (!recordId) continue;
         
-        // 获取所有字段的值
+        // 获取支持的字段的值
         const values: Record<string, string | null> = {};
         
-        for (const field of fieldMeta) {
+        for (const field of supportedFields) {
           try {
             const val = await table.getCellValue(field.id, recordId);
             if (val === null || val === undefined) {
@@ -225,7 +231,7 @@ function App() {
               values[field.id] = String(val);
             }
           } catch (e) {
-            console.error(`Error getting value for field ${field.id}:`, e);
+            console.warn(`Skip field ${field.id} (type ${field.type}):`, e);
             values[field.id] = null;
           }
         }
