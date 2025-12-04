@@ -11,12 +11,15 @@ interface ConfigPanelProps {
   tables: Option[];
   views: Option[];
   fields: Option[];
+  allFields: Option[];  // 所有字段（用于筛选）
   selectedTable: string;
   selectedView: string;
   selectedField: string;
+  filterField: string;
   onTableChange: (value: string) => void;
   onViewChange: (value: string) => void;
   onFieldChange: (value: string) => void;
+  onFilterFieldChange: (value: string) => void;
   onPreview: () => void;
   onSave: () => void;
 }
@@ -25,12 +28,15 @@ export function ConfigPanel({
   tables,
   views,
   fields,
+  allFields,
   selectedTable,
   selectedView,
   selectedField,
+  filterField,
   onTableChange,
   onViewChange,
   onFieldChange,
+  onFilterFieldChange,
   onPreview,
   onSave,
 }: ConfigPanelProps) {
@@ -74,6 +80,24 @@ export function ConfigPanel({
           filter
           disabled={!selectedTable}
         />
+      </div>
+
+      <Title heading={6} style={{ marginTop: 8 }}>筛选设置</Title>
+      
+      <div>
+        <Text style={{ display: 'block', marginBottom: 8 }}>筛选字段（排除"审核通过"）</Text>
+        <Select
+          style={{ width: '100%' }}
+          value={filterField}
+          onChange={(value) => onFilterFieldChange(value as string)}
+          optionList={[{ value: '', label: '不筛选' }, ...allFields]}
+          placeholder="选择要筛选的字段"
+          filter
+          disabled={!selectedTable}
+        />
+        <Text type="tertiary" size="small" style={{ marginTop: 4 }}>
+          选择后将只显示该字段值不为"审核通过"的记录
+        </Text>
       </div>
       
       <Button

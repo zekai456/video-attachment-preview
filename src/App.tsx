@@ -2,7 +2,7 @@ import { useEffect, useState, useCallback } from 'react';
 import { dashboard, bitable, FieldType, IConfig as SDKConfig, IDataCondition } from '@lark-base-open/js-sdk';
 import { Spin } from '@douyinfe/semi-ui';
 import { ConfigPanel } from './components/ConfigPanel';
-import { ViewPanel } from './components/ViewPanel';
+import { ViewPanel, RecordData, FieldInfo } from './components/ViewPanel';
 
 // 仪表盘状态枚举
 enum DashboardState {
@@ -17,20 +17,11 @@ interface ICustomConfig {
   tableId: string;
   viewId: string;
   attachmentFieldId: string;
+  filterFieldId: string;
 }
 
-// 表格选项
-interface TableOption {
-  value: string;
-  label: string;
-}
-
-interface ViewOption {
-  value: string;
-  label: string;
-}
-
-interface FieldOption {
+// 选项类型
+interface Option {
   value: string;
   label: string;
 }
@@ -44,19 +35,22 @@ interface AttachmentItem {
 
 function App() {
   const [loading, setLoading] = useState(true);
-  const [state, setState] = useState<DashboardState>(DashboardState.View);
+  const [state, setState] = useState<DashboardState>(DashboardState.Config);
   
   // 配置相关
-  const [tables, setTables] = useState<TableOption[]>([]);
-  const [views, setViews] = useState<ViewOption[]>([]);
-  const [fields, setFields] = useState<FieldOption[]>([]);
+  const [tables, setTables] = useState<Option[]>([]);
+  const [views, setViews] = useState<Option[]>([]);
+  const [attachmentFields, setAttachmentFields] = useState<Option[]>([]);
+  const [allFields, setAllFields] = useState<Option[]>([]);
+  const [fieldInfos, setFieldInfos] = useState<FieldInfo[]>([]);
   
   const [selectedTable, setSelectedTable] = useState<string>('');
   const [selectedView, setSelectedView] = useState<string>('');
   const [selectedField, setSelectedField] = useState<string>('');
+  const [filterField, setFilterField] = useState<string>('');
   
   // 数据相关
-  const [records, setRecords] = useState<Array<{id: string; name: string; hasVideo: boolean}>>([]);
+  const [records, setRecords] = useState<RecordData[]>([]);
   const [selectedRecord, setSelectedRecord] = useState<string>('');
   const [videoUrl, setVideoUrl] = useState<string>('');
 
@@ -72,63 +66,61 @@ function App() {
       // 获取仪表盘状态
       const currentState = dashboard.state as DashboardState;
       console.log('Dashboard state:', currentState);
-      setState(currentState);
       
-      // 如果状态为空或未知，默认进入配置状态
-      if (!currentState || (currentState !== DashboardState.View && currentState !== DashboardState.FullScreen)) {
+      // 默认进入配置状态，除非明确是展示状态
+      if (currentState === DashboardState.View || currentState === DashboardState.FullScreen) {
+        setState(currentState);
+      } else {
         setState(DashboardState.Config);
       }
       
       // 获取所有表
       const tableList = await bitable.base.getTableList();
-      const tableOptions: TableOption[] = [];
+      const tableOptions: Option[] = [];
       for (const table of tableList) {
         const name = await table.getName();
         tableOptions.push({ value: table.id, label: name });
       }
       setTables(tableOptions);
       
-      if (currentState === DashboardState.Create) {
-        // 创建状态：自动选择第一个表
-        if (tableOptions.length > 0) {
-          await handleTableChange(tableOptions[0].value);
-        }
-      } else {
-        // 配置/展示状态：读取已保存的配置
+      // 尝试读取已保存的配置
+      if (currentState !== DashboardState.Create) {
         try {
           const config = await dashboard.getConfig();
           const customConfig = config?.customConfig as ICustomConfig | undefined;
           if (customConfig) {
-            const { tableId, viewId, attachmentFieldId } = customConfig;
+            const { tableId, viewId, attachmentFieldId, filterFieldId } = customConfig;
             if (tableId) {
               setSelectedTable(tableId);
-              await loadViews(tableId);
-              await loadFields(tableId);
+              await loadTableData(tableId);
               
               if (viewId) setSelectedView(viewId);
               if (attachmentFieldId) setSelectedField(attachmentFieldId);
+              if (filterFieldId) setFilterField(filterFieldId);
               
               // 加载记录数据
               if (viewId && attachmentFieldId) {
-                await loadRecords(tableId, viewId, attachmentFieldId);
+                await loadRecords(tableId, viewId, attachmentFieldId, filterFieldId);
               }
             }
           }
         } catch (e) {
-          console.log('No saved config yet');
-          if (tableOptions.length > 0) {
-            await handleTableChange(tableOptions[0].value);
-          }
+          console.log('No saved config, auto select first table');
         }
+      }
+      
+      // 如果没有选择表，自动选择第一个
+      if (!selectedTable && tableOptions.length > 0) {
+        await handleTableChange(tableOptions[0].value);
       }
       
       // 监听配置变化
       dashboard.onConfigChange(async (event: { data: SDKConfig }) => {
         const customConfig = event.data?.customConfig as ICustomConfig | undefined;
         if (customConfig) {
-          const { tableId, viewId, attachmentFieldId } = customConfig;
+          const { tableId, viewId, attachmentFieldId, filterFieldId } = customConfig;
           if (tableId && viewId && attachmentFieldId) {
-            await loadRecords(tableId, viewId, attachmentFieldId);
+            await loadRecords(tableId, viewId, attachmentFieldId, filterFieldId);
           }
         }
       });
@@ -140,71 +132,101 @@ function App() {
     }
   };
 
-  const loadViews = async (tableId: string) => {
+  const loadTableData = async (tableId: string) => {
     try {
       const table = await bitable.base.getTableById(tableId);
+      
+      // 加载视图
       const viewList = await table.getViewMetaList();
-      const viewOptions: ViewOption[] = viewList.map((v: { id: string; name: string }) => ({
+      const viewOptions: Option[] = viewList.map((v: { id: string; name: string }) => ({
         value: v.id,
         label: v.name,
       }));
       setViews(viewOptions);
-      return viewOptions;
-    } catch (e) {
-      console.error('Load views failed:', e);
-      return [];
-    }
-  };
-
-  const loadFields = async (tableId: string) => {
-    try {
-      const table = await bitable.base.getTableById(tableId);
+      
+      // 加载所有字段
       const fieldList = await table.getFieldMetaList();
-      // 只获取附件类型的字段
-      const attachmentFields = fieldList.filter((f: { type: FieldType }) => f.type === FieldType.Attachment);
-      const fieldOptions: FieldOption[] = attachmentFields.map((f: { id: string; name: string }) => ({
+      
+      // 附件字段
+      const attFieldOptions: Option[] = fieldList
+        .filter((f: { type: FieldType }) => f.type === FieldType.Attachment)
+        .map((f: { id: string; name: string }) => ({
+          value: f.id,
+          label: f.name,
+        }));
+      setAttachmentFields(attFieldOptions);
+      
+      // 所有字段（用于筛选和显示）
+      setAllFields(fieldList.map((f: { id: string; name: string }) => ({
         value: f.id,
         label: f.name,
-      }));
-      setFields(fieldOptions);
-      return fieldOptions;
+      })));
+      
+      // 字段信息（用于表格显示）
+      setFieldInfos(fieldList.map((f: { id: string; name: string; type: number }) => ({
+        id: f.id,
+        name: f.name,
+        type: f.type,
+      })));
+      
+      return { viewOptions, attFieldOptions };
     } catch (e) {
-      console.error('Load fields failed:', e);
-      return [];
+      console.error('Load table data failed:', e);
+      return { viewOptions: [] as Option[], attFieldOptions: [] as Option[] };
     }
   };
 
-  const loadRecords = async (tableId: string, viewId: string, fieldId: string) => {
+  const loadRecords = async (tableId: string, viewId: string, attachmentFieldId: string, filterFieldId?: string) => {
     try {
       const table = await bitable.base.getTableById(tableId);
       const view = await table.getViewById(viewId);
       const recordIdList = await view.getVisibleRecordIdList();
       
       const fieldMeta = await table.getFieldMetaList();
-      const primaryField = fieldMeta.find((f: { isPrimary?: boolean }) => f.isPrimary);
+      const displayFields = fieldMeta.slice(0, 5); // 显示前5个字段
       
-      const recordList: Array<{id: string; name: string; hasVideo: boolean}> = [];
+      const recordList: RecordData[] = [];
       
       for (const recordId of recordIdList) {
         if (!recordId) continue;
         
-        let name = '';
-        if (primaryField) {
-          const val = await table.getCellValue(primaryField.id, recordId);
-          if (val && Array.isArray(val) && val.length > 0) {
-            const first = val[0] as { text?: string } | string;
-            if (first && typeof first === 'object' && 'text' in first) {
-              name = String(first.text || '');
+        // 获取各字段的值
+        const values: Record<string, string | null> = {};
+        
+        for (const field of displayFields) {
+          try {
+            const val = await table.getCellValue(field.id, recordId);
+            if (val === null || val === undefined) {
+              values[field.id] = null;
+            } else if (Array.isArray(val)) {
+              if (val.length === 0) {
+                values[field.id] = null;
+              } else {
+                const first = val[0] as { text?: string; name?: string } | string;
+                if (typeof first === 'object' && first !== null) {
+                  values[field.id] = first.text || first.name || JSON.stringify(first);
+                } else {
+                  values[field.id] = String(first);
+                }
+              }
             } else {
-              name = String(first || '');
+              values[field.id] = String(val);
             }
-          } else if (val) {
-            name = String(val);
+          } catch {
+            values[field.id] = null;
+          }
+        }
+        
+        // 检查筛选条件
+        if (filterFieldId) {
+          const filterValue = values[filterFieldId];
+          if (filterValue === '审核通过') {
+            continue; // 跳过审核通过的记录
           }
         }
         
         // 检查是否有视频附件
-        const attVal = await table.getCellValue(fieldId, recordId);
+        const attVal = await table.getCellValue(attachmentFieldId, recordId);
         let hasVideo = false;
         if (attVal && Array.isArray(attVal) && attVal.length > 0) {
           hasVideo = attVal.some((item) => {
@@ -216,7 +238,7 @@ function App() {
           });
         }
         
-        recordList.push({ id: recordId, name: name || `Record ${recordList.length + 1}`, hasVideo });
+        recordList.push({ id: recordId, values, hasVideo });
       }
       
       setRecords(recordList);
@@ -224,7 +246,10 @@ function App() {
       // 自动选择第一条有视频的记录
       const firstVideo = recordList.find(r => r.hasVideo);
       if (firstVideo) {
-        await handleRecordSelect(tableId, fieldId, firstVideo.id);
+        await handleRecordSelect(tableId, attachmentFieldId, firstVideo.id);
+      } else {
+        setSelectedRecord('');
+        setVideoUrl('');
       }
     } catch (e) {
       console.error('Load records failed:', e);
@@ -235,18 +260,18 @@ function App() {
     setSelectedTable(tableId);
     setSelectedView('');
     setSelectedField('');
+    setFilterField('');
     setRecords([]);
     setVideoUrl('');
     
-    const viewOptions = await loadViews(tableId);
-    const fieldOptions = await loadFields(tableId);
+    const { viewOptions, attFieldOptions } = await loadTableData(tableId);
     
-    // 自动选择第一个视图和字段
+    // 自动选择第一个视图和附件字段
     if (viewOptions.length > 0) {
       setSelectedView(viewOptions[0].value);
     }
-    if (fieldOptions.length > 0) {
-      setSelectedField(fieldOptions[0].value);
+    if (attFieldOptions.length > 0) {
+      setSelectedField(attFieldOptions[0].value);
     }
   };
 
@@ -256,6 +281,10 @@ function App() {
 
   const handleFieldChange = (fieldId: string) => {
     setSelectedField(fieldId);
+  };
+
+  const handleFilterFieldChange = (fieldId: string) => {
+    setFilterField(fieldId);
   };
 
   const handleRecordSelect = useCallback(async (tableId: string, fieldId: string, recordId: string) => {
@@ -300,6 +329,7 @@ function App() {
           tableId: selectedTable,
           viewId: selectedView,
           attachmentFieldId: selectedField,
+          filterFieldId: filterField,
         },
       };
       await dashboard.saveConfig(config);
@@ -310,9 +340,14 @@ function App() {
 
   const handlePreview = async () => {
     if (selectedTable && selectedView && selectedField) {
-      await loadRecords(selectedTable, selectedView, selectedField);
+      await loadRecords(selectedTable, selectedView, selectedField, filterField);
     }
   };
+
+  // 获取筛选字段名称
+  const filterFieldName = filterField 
+    ? allFields.find((f: Option) => f.value === filterField)?.label 
+    : '';
 
   if (loading) {
     return (
@@ -322,9 +357,7 @@ function App() {
     );
   }
 
-  console.log('Current state for render:', state);
-
-  // 配置状态（Create 或 Config）- 显示配置面板
+  // 配置状态 - 显示配置面板
   const isConfigMode = state === DashboardState.Create || state === DashboardState.Config;
   
   if (isConfigMode) {
@@ -333,22 +366,28 @@ function App() {
         <div className="preview-area">
           <ViewPanel
             records={records}
+            fields={fieldInfos}
             selectedRecord={selectedRecord}
             videoUrl={videoUrl}
             onRecordSelect={(id: string) => handleRecordSelect(selectedTable, selectedField, id)}
+            filterFieldId={filterField}
+            filterFieldName={filterFieldName}
           />
         </div>
         <div className="config-panel">
           <ConfigPanel
             tables={tables}
             views={views}
-            fields={fields}
+            fields={attachmentFields}
+            allFields={allFields}
             selectedTable={selectedTable}
             selectedView={selectedView}
             selectedField={selectedField}
+            filterField={filterField}
             onTableChange={handleTableChange}
             onViewChange={handleViewChange}
             onFieldChange={handleFieldChange}
+            onFilterFieldChange={handleFilterFieldChange}
             onPreview={handlePreview}
             onSave={handleSaveConfig}
           />
@@ -357,13 +396,16 @@ function App() {
     );
   }
 
-  // 展示状态（View 或 FullScreen）
+  // 展示状态
   return (
     <ViewPanel
       records={records}
+      fields={fieldInfos}
       selectedRecord={selectedRecord}
       videoUrl={videoUrl}
       onRecordSelect={(id: string) => handleRecordSelect(selectedTable, selectedField, id)}
+      filterFieldId={filterField}
+      filterFieldName={filterFieldName}
       fullWidth
     />
   );
